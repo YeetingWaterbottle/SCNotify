@@ -1,0 +1,7 @@
+[
+    {
+        "id": "SchoolID",
+        "password": "SchoolPassword",
+        "discord_id": "DiscordID"
+    }
+]
