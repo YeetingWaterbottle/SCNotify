@@ -17,7 +17,7 @@ class SCNotify:
         """Initializes the instance with base domain of the studentconnect.
 
         Args:
-            base_domain: URL of the target StudentConnect website
+            base_domain (str): URL of the target StudentConnect website
         """
         self.base_domain = base_domain
         self.SC_session = requests.Session()
@@ -29,11 +29,11 @@ class SCNotify:
         """Login to StudentConnect with student credentials.
 
         Args:
-            student_id: The student account login
-            password: The student account password
+            student_id (str): The student account login
+            password (str): The student account password
 
         Returns:
-            Whether the login was successful
+            bool: Whether the login was successful
         """
         url = urljoin(self.base_domain, "Home/Login")
 
@@ -64,7 +64,7 @@ class SCNotify:
         """Checks if student is logged in.
 
         Returns:
-            Whether the student is logged in
+            bool: Whether the student is logged in
         """
         if not self.is_logged_in:
             logging.warning("Student not logged in")
@@ -76,7 +76,7 @@ class SCNotify:
         """Get the student tracks from StudentConnect.
 
         Returns:
-            The track information
+            list[dict]: The track information
         """
         if not self.logged_in():
             return []
@@ -142,7 +142,7 @@ class SCNotify:
         """Set the student track by sending request to StudentConnect website.
 
         Args:
-            track_id: The target track id to select
+            track_id (str): The target track id to select
         """
         if not self.logged_in():
             return
@@ -152,7 +152,6 @@ class SCNotify:
 
     def save_snapshot(self) -> None:
         """Saves a copy of the assignment page.
-
         Creates a new folder based on the student id, then creates a new html
         file named with the current time
         """
@@ -183,7 +182,7 @@ class SCNotify:
         Get the list of file located in a folder named to the student id
 
         Returns:
-            List of saved snapshot filenames
+            list[str]: List of saved snapshot filenames
         """
         folder_name = self.student_id
 
@@ -195,10 +194,10 @@ class SCNotify:
         """Gets the content of snapshot by index.
 
         Args:
-            index: The index of the target snapshot file
+            index (int): The index of the target snapshot file
 
         Returns:
-            The text content of the file
+            str: The text content of the file
         """
         folder_name = self.student_id
 
@@ -213,51 +212,131 @@ class SCNotify:
         with open(target_path, "rb") as file:
             return file.read()
 
+    def parse_assignment(self, assignment_content: str) -> list[dict]:
+        """Parse the raw assignment html file to a formatted list.
+
+        Args:
+            assignment_content (str): Raw html content of assignments
+
+        Returns:
+            list[dict]: List of assignment details
+        """
+        soup = BeautifulSoup(assignment_content, "html.parser")
+
+        assignment_data_list = []
+
+        for assignment_entry in soup.find_all("tr"):
+            assignment_info = {}
+            try:
+                assignment_detail = assignment_entry.find_all("td")
+                assignment_info["due_date"] = assignment_detail[1].text.strip()
+                assignment_info["assigned_date"] = assignment_detail[2].text.strip()
+                assignment_info["title"] = assignment_detail[3].text.strip()
+                assignment_info["total_score"] = assignment_detail[4].text.strip()
+                assignment_info["score"] = assignment_detail[5].text.strip()
+                assignment_info["extra_credit"] = bool(assignment_detail[7].find("img"))
+                assignment_info["not_graded"] = bool(assignment_detail[8].find("img"))
+                assignment_info["comments"] = assignment_detail[9].text.strip()
+
+            except AttributeError as e:
+                logging.warning(f"Assignment entry missing attribute: {e}")
+                continue
+
+            assignment_data_list.append(assignment_info)
+        
+        return assignment_data_list
+        
+
     def parse_snapshot(self, snapshot_content: str) -> list[dict]:
         """Parse the snapshot file and return a couse info list.
 
         Args:
-            snapshot_content: The string content of a snapshot file
+            snapshot_content (str): The string content of a snapshot file
 
         Returns:
-            The course info and the number of assignment persent
+            list[dict]: The course info and the number of assignment persent
         """
         soup = BeautifulSoup(snapshot_content, "html.parser")
 
-        courses = soup.find_all("table")
-
         course_data_list = []
 
-        for course in courses:
-            course_name = ""
-            course_period = ""
-            course_assignments_elements = []
+        for course_table in soup.find_all("table"):
+            course_info = {}
 
-            if course_caption_match := course.find("caption"):  # Get course info
-                course_caption = course_caption_match.text.strip().split("\xa0")
-                course_period = course_caption[0].strip().split()[-1]
-                course_name = course_caption[-1].strip()
-                logging.info(f"Found course info: `{course_period} - {course_name}`")
-            else:
-                logging.warning("Could not find course info")
+            try:
+                course_caption = course_table.find("caption").text.strip().split("\xa0")
+                course_info["course_period"] = course_caption[0].strip().split()[-1]
+                course_info["course_name"] = course_caption[-1].strip()
+            except AttributeError:
+                logging.warning("Course table missing caption (course info)")
+                continue # Skip if caption is missing
 
-            if course_assignments_match := course.find("tbody"):  # Get assignments
-                course_assignments_elements = course_assignments_match
-                logging.info(
-                    f"Found course assignment elements, length: `{len(course_assignments_elements)}`"
-                )
-            else:
-                logging.warning("Could not find assignment elements")
+            try:
+                course_assignments = course_table.find("tbody")
+                all_assignments = self.parse_assignment(str(course_assignments))
+                course_info["assignments"] = self.remove_duplicate_assignments(all_assignments)
+            except AttributeError:
+                logging.warning("Course table missing tbody (assignment elements)")
 
-            course_data = {
-                "course_name": course_name,
-                "course_period": course_period,
-                "assignment_elements": course_assignments_elements,
-            }
 
-            course_data_list.append(course_data)
+            course_data_list.append(course_info)
 
         return course_data_list
+
+    def remove_duplicate_assignments(self, assignments: list[dict]) -> list[dict]:
+        """Remove duplicated assignments with the same title
+
+        Args:
+            assignments (list[dict]): List of assignments generated by the self.parse_assignment() method
+
+        Returns:
+            list[dict]: List of assignment dictionaries without entries with the same title
+        """
+        seen = set()
+        result = []
+        for d in assignments:
+            if d["title"] not in seen:
+                result.append(d)
+                seen.add(d["title"])
+        return result
+
+
+    def compare_assignments(self, old_assignments: list[dict], new_assignments: list[dict]) -> list[str]:
+        """Compare two lists of assignments and generate message about the change.
+
+        Args:
+            old_assignments (list[dict]): A list of dictionaries that consists of assignment information.
+            new_assignments (list[dict]): A list of dictionaries that consists of assignment information, possibly differ from old_assignments.
+        
+        Returns:
+            list[str]: A list of messages describing the change between assignment lists
+        """
+
+        messages = []
+        # Create a dictionary to store old assignments by title for faster lookup
+        old_assignments_by_title = {a["title"]: a for a in old_assignments}
+
+        for new_assignment in new_assignments:
+            title = new_assignment["title"]
+            if title not in old_assignments_by_title:
+                # New assignment added
+                messages.append(f"New assignment added: `{title}`")
+            else:
+                old_assignment = old_assignments_by_title[title]
+                # Check for changes in each field
+                for field in new_assignment:
+                    if new_assignment[field] != old_assignment.get(field, None):
+                        if field == "comments" and new_assignment[field]:
+                            # New assignment comment
+                            messages.append(f"Assignment comment added: `{title}`")
+                        elif field in ["score", "total_score"]:
+                            # Assignment grade changed
+                            messages.append(f"Assignment grade changed: `{title}` - **{new_assignment['score']}/{new_assignment['total_score']}**")
+                        else:
+                            # Other assignment update (e.g., due date)
+                            messages.append(f"Assignment updated: `{title}` - **({field})**")
+
+        return messages
 
     def check_snapshot_change(self) -> list[dict]:
         """Checks two snapshot files for changes.
@@ -281,23 +360,26 @@ class SCNotify:
             logging.warning("Course count mismatch between snapshot 1 and 2")
             return [{"message": "Course count mismatch"}]
 
-        result = []
+        results = []
 
-        for dict_1, dict_2 in zip(snapshot_1, snapshot_2):
-            # Check for difference in assignments
-            if dict_1.get("assignment_elements") != dict_2.get("assignment_elements"):
-                course_name = dict_1.get("course_name")
-                course_period = dict_1.get("course_period")
+        # Check for difference in assignments
+        for course_data_1, course_data_2 in zip(snapshot_1, snapshot_2):
+            course_name = course_data_1.get("course_name")
+            course_period = course_data_1.get("course_period")
 
-                modified_course_data = {
-                    "course_name": course_name,
-                    "course_period": course_period,
-                    "message": "Assignments were modified",
-                }
+            assignments_1 = course_data_1.get("assignments")
+            assignments_2 = course_data_2.get("assignments")
 
-                result.append(modified_course_data)
+            change_message = self.compare_assignments(assignments_2, assignments_1)
+            modified_course_data = {
+                "course_name": course_name,
+                "course_period": course_period,
+                "assignment_changes": change_message,
+            }
+            results.append(modified_course_data)
 
-        return result
+        
+        return results
 
     def logout(self) -> None:
         """Logs student off from Student Connect."""

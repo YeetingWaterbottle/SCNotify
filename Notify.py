@@ -18,13 +18,15 @@ class Notify:
             logging.info("No assignment changes found")
             return None
 
-        message = []
+        output_message = []
 
         for item in diff:
-            message.append(f"### {item.get('course_name')}")
-            message.append(f"`{item.get('message')}`")
+            if change_message := item.get("assignment_changes"):
+                output_message.append(f"### {item.get('course_name')}")
+                for message in change_message:
+                    output_message.append(message)
 
-        return "\n".join(message)
+        return "\n".join(output_message)
 
     def send_discord_webhook(self, message: str, username: str = "SCNotify"):
         """Send message through discord webhook.
