@@ -45,3 +45,4 @@ class Notify:
         }
 
         requests.post(self.discord_webhook_url, json=data)
+

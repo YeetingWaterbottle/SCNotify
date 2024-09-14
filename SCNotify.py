@@ -72,6 +72,27 @@ class SCNotify:
 
         return True
 
+    def select_first_track(self) -> None:
+        url = urljoin(self.base_domain, "Home/LoadStuMobileList")
+
+        track_page = self.SC_session.get(
+            url, headers={"User-Agent": self.MOBILE_USER_AGENT}
+        )
+
+        soup = BeautifulSoup(track_page.content, "html.parser")
+
+        track_element = soup.find("a", class_="clsMyStudents")
+
+        href_attr = track_element.get("href")
+
+        if track_id_match := re.findall(r"\d+", href_attr):  # Find all digits
+            track_id = track_id_match[0]
+            logging.info(f"Found Track ID: `{track_id}`")
+
+            self.select_track(track_id)
+        else:
+            logging.warning("Could not find Track ID")
+
     def get_tracks(self) -> list[dict]:
         """Get the student tracks from StudentConnect.
 
@@ -155,6 +176,9 @@ class SCNotify:
         Creates a new folder based on the student id, then creates a new html
         file named with the current time
         """
+        if not self.logged_in():
+            return
+
         url = urljoin(self.base_domain, "Home/LoadProfileData/Assignments")
 
         # Create new folder for student if not present
@@ -186,9 +210,12 @@ class SCNotify:
         """
         folder_name = self.student_id
 
+        if not os.path.exists(folder_name):
+            os.makedirs(folder_name)
+
         all_snapshots = os.listdir(path=folder_name)
 
-        return sorted(all_snapshots)[::-1] # sorts by latest
+        return sorted(all_snapshots)[::-1]  # sorts by latest
 
     def get_snapshot_content(self, index: int) -> str:
         """Gets the content of snapshot by index.
@@ -207,7 +234,6 @@ class SCNotify:
         target_path = os.path.join(folder_name, target_snapshot)
 
         logging.info(f"Getting snapshot: {target_path}")
-        
 
         with open(target_path, "rb") as file:
             return file.read()
@@ -243,9 +269,8 @@ class SCNotify:
                 continue
 
             assignment_data_list.append(assignment_info)
-        
+
         return assignment_data_list
-        
 
     def parse_snapshot(self, snapshot_content: str) -> list[dict]:
         """Parse the snapshot file and return a couse info list.
@@ -269,15 +294,16 @@ class SCNotify:
                 course_info["course_name"] = course_caption[-1].strip()
             except AttributeError:
                 logging.warning("Course table missing caption (course info)")
-                continue # Skip if caption is missing
+                continue  # Skip if caption is missing
 
             try:
                 course_assignments = course_table.find("tbody")
                 all_assignments = self.parse_assignment(str(course_assignments))
-                course_info["assignments"] = self.remove_duplicate_assignments(all_assignments)
+                course_info["assignments"] = self.remove_duplicate_assignments(
+                    all_assignments
+                )
             except AttributeError:
                 logging.warning("Course table missing tbody (assignment elements)")
-
 
             course_data_list.append(course_info)
 
@@ -300,14 +326,15 @@ class SCNotify:
                 seen.add(d["title"])
         return result
 
-
-    def compare_assignments(self, old_assignments: list[dict], new_assignments: list[dict]) -> list[str]:
+    def compare_assignments(
+        self, old_assignments: list[dict], new_assignments: list[dict]
+    ) -> list[str]:
         """Compare two lists of assignments and generate message about the change.
 
         Args:
             old_assignments (list[dict]): A list of dictionaries that consists of assignment information.
             new_assignments (list[dict]): A list of dictionaries that consists of assignment information, possibly differ from old_assignments.
-        
+
         Returns:
             list[str]: A list of messages describing the change between assignment lists
         """
@@ -320,7 +347,17 @@ class SCNotify:
             title = new_assignment["title"]
             if title not in old_assignments_by_title:
                 # New assignment added
-                messages.append(f"New assignment added: `{title}`")
+                score = new_assignment["score"] if new_assignment["score"] else "?"
+                total_score = (
+                    new_assignment["total_score"]
+                    if new_assignment["total_score"]
+                    else "?"
+                )
+                score_caption = f"{score} / {total_score}"
+                messages.append(
+                    f"New assignment added: `{title}` - **{score_caption}**"
+                )
+
             else:
                 old_assignment = old_assignments_by_title[title]
                 # Check for changes in each field
@@ -331,10 +368,14 @@ class SCNotify:
                             messages.append(f"Assignment comment added: `{title}`")
                         elif field in ["score", "total_score"]:
                             # Assignment grade changed
-                            messages.append(f"Assignment grade changed: `{title}` - **{new_assignment['score']}/{new_assignment['total_score']}**")
+                            messages.append(
+                                f"Assignment grade changed: `{title}` - **{new_assignment['score']}/{new_assignment['total_score']}**"
+                            )
                         else:
                             # Other assignment update (e.g., due date)
-                            messages.append(f"Assignment updated: `{title}` - **({field})**")
+                            messages.append(
+                                f"Assignment updated: `{title}` - **({field})** : **{new_assignment[field]}**"
+                            )
 
         return messages
 
@@ -378,7 +419,6 @@ class SCNotify:
             }
             results.append(modified_course_data)
 
-        
         return results
 
     def logout(self) -> None:

@@ -161,4 +161,3 @@ cython_debug/
 
 # Project specific files
 accounts.json
-main.py
