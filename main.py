@@ -57,4 +57,4 @@ if __name__ == "__main__":
         except:
             logging.error(f"Error Occured, skipping student: {student_id}")
 
-        time.sleep(10)
+        # time.sleep(10)

@@ -255,6 +255,10 @@ class SCNotify:
             assignment_info = {}
             try:
                 assignment_detail = assignment_entry.find_all("td")
+                if len(assignment_detail) == 1:
+                    logging.info("Missing class assignments, skipping")
+                    continue
+
                 assignment_info["due_date"] = assignment_detail[1].text.strip()
                 assignment_info["assigned_date"] = assignment_detail[2].text.strip()
                 assignment_info["title"] = assignment_detail[3].text.strip()
